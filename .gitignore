@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+#MacOS Filesystem
+*.DS_Store
+
+#XCode Specific
+*.xcodeproj
