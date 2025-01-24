@@ -34,5 +34,9 @@
 #MacOS Filesystem
 *.DS_Store
 
-#XCode Specific
+#IDE Specific
 *.xcodeproj
+*.kdev4
+
+#Build directories
+test_network/build/
