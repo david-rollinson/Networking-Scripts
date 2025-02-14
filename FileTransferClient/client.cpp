@@ -17,29 +17,30 @@
 #define PORT "3490" // The port the client will be connecting to
 #define MAXDATASIZE 100
 
-void *get_in_addr(struct sockaddr *sa){
+void* format_in_addr(struct sockaddr *sa){ // Returns a generic pointer to handle multiple return types
     if(sa->sa_family == AF_INET){
-        return &(((struct sockaddr_in*)sa)->sin_addr); // Return the IPv4 address format
+        return &(((struct sockaddr_in*)sa)->sin_addr); // Cast the structure according to the IP version
+    } else { // Implies AF_INET6
+        return &(((struct sockaddr_in6*)sa)->sin6_addr);
     }
-    
-    return &(((struct sockaddr_in6*)sa)->sin6_addr); // Return the IPv6 address format
 }
 
 int main(int argc, char *argv[]){
     int sockfd = 0;
-    int numbytes;
-    int opt = 1;
+    int opt = 1; // Set socket reuse option
     char buf[MAXDATASIZE];
     
     // Setup data to send
+    int numbytes;
     char const *filename = "example.txt"; // Store file name as string literal (for C compatibility)
     std::ofstream file("example.txt", std::ios::binary); // Define a file to open in binary mode
     if (!file.is_open()) { // Check if file is open elsewhere
-        perror("");
+        printf("Could not open file");
         return 1;
     }
     
-    struct addrinfo hints, *servinfo, *p; // Create the structures for connection settings, getaddrinfo and bindings
+    struct addrinfo hints, // Create structure to hold socket options
+        *servinfo, *p; // For dynamic allocation on the heap due to size unknown (getaddrinfo result could be a linked list)
     int status;
     char cipstr[INET6_ADDRSTRLEN]; // Client array to cast and print IP
     
@@ -48,24 +49,34 @@ int main(int argc, char *argv[]){
         exit(1);
     }
     
-    bzero(&hints, sizeof(hints)); // Set the structure to empty
+    memset(&hints, 0, sizeof(hints)); // Fill the structure with 0
     hints.ai_family = AF_UNSPEC; // Agnostic IP family
     hints.ai_socktype = SOCK_STREAM;
+    // We don't need to set ai_flags because we're not using a passive connection, nor require other options e.g. AI_NUMERICHOST
     
-    if ((status = getaddrinfo(argv[1], PORT, &hints, &servinfo)) != 0) { // Pass in address from CMD, get information and store it inside the servinfo structure
+    if ((status = getaddrinfo(argv[1], PORT, &hints, &servinfo)) != 0) { // Initialise servinfo reference value
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
-        return 2;
+        return 2; // Return under the custom error condition
     }
     
-    // Connect to the first socket we can
-    for(p = servinfo; p != NULL; p = p->ai_next){
-        if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
+    // Connect to the first result available
+    for(p = servinfo; p != NULL; p = p->ai_next){ // Copy to iterator so we can maintain access and free servinfo later
+        
+        // Create the socket
+        if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0){ // Syscall returns -1 on err
             perror("client: socket");
             continue;
         }
         
-        if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
-            close(sockfd);
+        // Set socket option to reuse port or address
+        if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0){
+            perror("setsockopt");
+            exit(1);
+        }
+        
+        // Connect on the socket
+        if(connect(sockfd, p->ai_addr, p->ai_addrlen) < 0){
+            close(sockfd); // Close the file descriptor for reuse
             perror("client: connect");
             continue;
         }
@@ -73,23 +84,21 @@ int main(int argc, char *argv[]){
         break;
     }
     
-    // Set socket option to reuse port or address
-    if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1){
-        perror("setsockopt");
-        exit(1);
-    }
-    
     if(p == NULL){
         fprintf(stderr, "client: failed to connect\n");
         return 2;
     }
-    
-    inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr), cipstr, INET6_ADDRSTRLEN);
-    printf("client: connectign to &s\n", cipstr);
+     
+    // Translate result to printable format
+    if(inet_ntop(p->ai_family, format_in_addr(p->ai_addr), cipstr, p->ai_addrlen) != NULL){
+        printf("client: connecting to %s\n", cipstr);
+    } else {
+        printf("client: IP failed to translate from network to host bit-order\n");
+    }
     
     freeaddrinfo(servinfo);
     
-    if ((numbytes = recv(sockfd, buf, MAXDATASIZE-1, 0)) == -1) {
+    if ((numbytes = recv(sockfd, buf, MAXDATASIZE-1, 0)) < 0) {
         perror("recv");
         exit(1);
     }
@@ -99,4 +108,6 @@ int main(int argc, char *argv[]){
     printf("client: received '%s'\n",buf);
 
     close(sockfd);
+    
+    return 0;
 }
