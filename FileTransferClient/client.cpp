@@ -28,12 +28,14 @@ void* format_in_addr(struct sockaddr *sa){ // Returns a generic pointer to handl
 int main(int argc, char *argv[]){
     int sockfd = 0;
     int opt = 1; // Set socket reuse option
-    char buf[MAXDATASIZE];
+    
+    int numbytes;
+    char in_buf[MAXDATASIZE];
+    char out_buf[MAXDATASIZE];
     
     // Setup data to send
-    int numbytes;
-    char const *filename = "example.txt"; // Store file name as string literal (for C compatibility)
-    std::ofstream file("example.txt", std::ios::binary); // Define a file to open in binary mode
+    char const *filename = "./example.txt"; // Store file name as string literal (for C compatibility)
+    std::ifstream file(filename, std::ios::binary); // Define a file to open in binary mode
     if (!file.is_open()) { // Check if file is open elsewhere
         printf("Could not open file");
         return 1;
@@ -96,17 +98,27 @@ int main(int argc, char *argv[]){
         printf("client: IP failed to translate from network to host bit-order\n");
     }
     
-    freeaddrinfo(servinfo);
+    freeaddrinfo(servinfo); // Free the linked list
     
-    if ((numbytes = recv(sockfd, buf, MAXDATASIZE-1, 0)) < 0) {
+    // RECEIVE SERVER MESSAGE
+    if ((numbytes = recv(sockfd, in_buf, MAXDATASIZE-1, 0)) < 0) { // recv() is blocking by default
         perror("recv");
-        exit(1);
     }
 
-    buf[numbytes] = '\0';
+    in_buf[numbytes] = '\0'; // Terminate the string by placing a NULL character at the end
 
-    printf("client: received '%s'\n",buf);
-
+    printf("client: received '%s'\n",in_buf);
+    
+    // SEND TO SERVER
+    if(!fork()){ // Evaluates to 0 inside the child process
+        file.read(out_buf, sizeof(out_buf)); // Store the file contents in memory
+        if (send(sockfd, out_buf, sizeof(out_buf), 0) < 0){
+            perror("send");
+        }
+        close(sockfd); // Close the sending socket inside the child
+        exit(0); // Exit the child process
+    }
+    
     close(sockfd);
     
     return 0;

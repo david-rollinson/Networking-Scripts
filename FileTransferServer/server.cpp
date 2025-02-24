@@ -13,9 +13,11 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <fstream>
 
 #define PORT "3490"
 #define BACKLOG 10
+#define MAXDATASIZE 1024
 
 void handle_sigchild(int s){
     
@@ -62,8 +64,14 @@ int main(int argc, const char * argv[]) {
     char sipstr[INET6_ADDRSTRLEN]; // Server array to cast and print IP
     char cipstr[INET6_ADDRSTRLEN]; // Client array to cast and print IP
     
+    // Setup receive
+    int numbytes;
+    char in_buf[MAXDATASIZE] = {0};
+    char const *filename = "./received.txt";
+    std::ofstream file(filename, std::ios::binary);
+    
     // SETUP SOCKET OPTIONS
-    bzero(&hints, sizeof(hints)); // Empty the structure
+    memset(&hints, 0, sizeof(hints)); // Empty the structure
     hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE; // Use host IP
@@ -77,7 +85,7 @@ int main(int argc, const char * argv[]) {
     for(p = servinfo; p != NULL; p = p->ai_next) { // Copy to iterator so we can maintain access and free servinfo later
         // Translate result to printable format
         if(inet_ntop(p->ai_family, format_in_addr(p->ai_addr), sipstr, p->ai_addrlen) != NULL){
-            printf("Current IP: %s\n", sipstr);
+            printf("Listening to: %s\n", sipstr); // "::" (IPv6) or "0.0.0.0" (IPv4) indicate listening on all available sources
         } else {
             printf("IP failed to translate from network to host bit-order\n");
         }
@@ -104,7 +112,7 @@ int main(int argc, const char * argv[]) {
         break;
     }
     
-    freeaddrinfo(servinfo); // Free the linked list from memory
+    freeaddrinfo(servinfo); // Free the linked list
     
     if (p == NULL)  {
         fprintf(stderr, "server: failed to bind\n"); // Print to the error stream
@@ -140,6 +148,42 @@ int main(int argc, const char * argv[]) {
         } else {
             printf("server: IP failed to translate from network to host bit-order\n");
         }
+        
+        // SEND TO CLIENT
+        if(!fork()){ // Evaluates to 0 inside the child process
+            close(sockfd); // Child process doesn't need the listening socket
+            char message[] = "Connected...";
+            if (send(new_fd, message, sizeof(message), 0) < 0){
+                perror("send");
+            }
+            close(new_fd); // Close the sending socket inside the child
+            exit(0); // Exit the child process
+        }
+        
+        // RECEIVE FROM CLIENT
+        if((numbytes = recv(new_fd, in_buf, MAXDATASIZE-1, 0)) < 0){
+            perror("recv");
+        }
+        
+        in_buf[numbytes] = '\0'; // Terminate the string by placing a NULL character at the end
+        
+        // Write the memory buffer to a file
+        if (!file) {
+            printf("Error: Failed to open file for writing!\n");
+            return 1;
+        }
+        file.write(in_buf, numbytes); // Write the buffer to the file
+        file.close();
+        
+//        int n;
+//        while((n = read(new_fd, in_buf, sizeof(in_buf))) > 0){
+//            file.write(in_buf, n);
+//            memset(in_buf, 0, sizeof(in_buf));
+//        }
+//        printf("Data successfully written to file.\n");
+//        
+//        close(new_fd); // Close parent sockets
+//        close(sockfd);
         
     }
     
